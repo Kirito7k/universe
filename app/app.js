@@ -118,7 +118,12 @@ async function api(method, path, { json, body, type, raw } = {}) {
   const headers = { Authorization: 'Bearer ' + t };
   if (json) { headers['Content-Type'] = 'application/json'; body = JSON.stringify(json); }
   else if (type) headers['Content-Type'] = type;
-  const r = await fetch(API + path, { method, headers, body });
+  const ctl = new AbortController();
+  const tm = setTimeout(() => ctl.abort(), 60000);
+  let r;
+  try { r = await fetch(API + path, { method, headers, body, signal: ctl.signal }); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'Drive хариу өгсөнгүй (60 сек)' : 'Сүлжээний алдаа: ' + e.message); }
+  finally { clearTimeout(tm); }
   if (r.status === 401) { token = null; LS.del('token'); await ensureToken(); }
   if (!r.ok) throw new Error(`Drive ${r.status}: ${(await r.text()).slice(0, 200)}`);
   if (raw) return r;
@@ -144,6 +149,7 @@ function index(list) {
 
 async function loadAll() {
   setStatus('…');
+  if (!S.root && !view.childElementCount) view.replaceChildren(el('div.msg', { text: 'Drive-аас уншиж байна…' }));
   const all = [];
   let pageToken = '';
   do {
@@ -152,6 +158,7 @@ async function loadAll() {
     const r = await api('GET', '/drive/v3/files?' + q);
     all.push(...r.files);
     pageToken = r.nextPageToken;
+    setStatus(all.length + '…');
   } while (pageToken);
   index(all);
   LS.set('files', all);
@@ -671,7 +678,8 @@ async function start() {
     if (!cached || !/^#\/(f|e)\//.test(location.hash)) await route();
     try { await L.load(); paintDot(); autoLearn(); } catch {}
   } catch (e) {
-    if (!cached || e.message === 'signin') handleErr(e);
+    setStatus('');
+    if (!cached || e.message === 'signin') handleErr(e); else toast(e.message, 3000);
   }
   // буцаж апп руу ороход шинэчилнэ
   document.addEventListener('visibilitychange', async () => {
