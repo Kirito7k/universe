@@ -321,6 +321,7 @@ let dirty = false; // засварлаж байгаа текст хадгала�
 function header(title, back) {
   $('#title').textContent = title;
   $('#back').hidden = !back;
+  $('#logo').hidden = !!back; // нүүр хуудсанд л лого
   $('#back').onclick = async () => {
     if (dirty && !(await ask('You have unsaved changes. Leave?', null, 'Leave'))) return;
     dirty = false;

@@ -96,3 +96,5 @@ a.btn { display: inline-block; text-decoration: none; }
 .dlg { width: min(420px, 100%); background: var(--card); border-radius: 16px; padding: 18px; box-shadow: 0 12px 40px rgba(0,0,0,.5); }
 .dlg-t { font-weight: 600; margin-bottom: 12px; }
 .dlg .search { margin-bottom: 14px; background: var(--card2); }
+
+#logo { width: 28px; height: 28px; border-radius: 7px; margin-left: 6px; }
