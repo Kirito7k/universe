@@ -245,6 +245,51 @@ async function createFile(name, parent, text, mime = 'text/markdown') {
   S.kids.get(parent).push(f);
   return f;
 }
+// Зураг (Blob) хуулах: multipart-ийг Blob-оор угсарна (binary эвдрэхгүй)
+async function createBlobFile(name, parent, blob) {
+  const b = 'univ' + Math.random().toString(36).slice(2);
+  const body = new Blob([`--${b}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify({ name, parents: [parent] })}\r\n--${b}\r\nContent-Type: ${blob.type || 'image/jpeg'}\r\n\r\n`, blob, `\r\n--${b}--`]);
+  const f = await api('POST', `/upload/drive/v3/files?uploadType=multipart&fields=${FIELDS}`, { body, type: 'multipart/related; boundary=' + b });
+  S.files.set(f.id, f);
+  if (!S.kids.has(parent)) S.kids.set(parent, []);
+  S.kids.get(parent).push(f);
+  return f;
+}
+
+// Утасны зургийг 1600px хүртэл жижигрүүлж JPEG болгоно (Drive, sync хурдан)
+function shrink(file) {
+  return new Promise((res) => {
+    const img = new Image();
+    img.onload = () => {
+      const k = Math.min(1, 1600 / Math.max(img.width, img.height));
+      const c = document.createElement('canvas');
+      c.width = Math.round(img.width * k); c.height = Math.round(img.height * k);
+      c.getContext('2d').drawImage(img, 0, 0, c.width, c.height);
+      c.toBlob((b) => res(b || file), 'image/jpeg', 0.85);
+      URL.revokeObjectURL(img.src);
+    };
+    img.onerror = () => res(file);
+    img.src = URL.createObjectURL(file);
+  });
+}
+
+// Note-д зураг нэмэх: .assets/ руу хуулж, note-ын төгсгөлд ![](.assets/...) нэмнэ
+async function addPhotos(note, files) {
+  let assets = (S.kids.get(S.root) || []).find((f) => f.mimeType === FOLDER && f.name === '.assets');
+  if (!assets) assets = await createFolder('.assets', S.root);
+  let text = await getText(note);
+  let n = 0;
+  for (const file of files) {
+    setStatus(`${++n}/${files.length}…`);
+    const blob = await shrink(file);
+    const stamp = new Date().toISOString().replace(/[-:T]/g, '').slice(0, 14);
+    const f = await createBlobFile(`img-${stamp}-${Math.random().toString(36).slice(2, 6)}.jpg`, assets.id, blob);
+    text = text.replace(/\s*$/, '') + `\n\n![](.assets/${f.name})\n`;
+  }
+  await updateFile(note, text);
+  setStatus('');
+}
+
 async function createFolder(name, parent) {
   const f = await api('POST', `/drive/v3/files?fields=${FIELDS}`, { json: { name, mimeType: FOLDER, parents: [parent] } });
   S.files.set(f.id, f);
@@ -339,7 +384,16 @@ async function showFile(id) {
       const text = await getText(f);
       const doc = el('div.doc', { html: render(text) });
       await fixImages(doc, f);
-      view.replaceChildren(el('div.bar', null, el('button.btn', { text: '✎ Edit', onclick: () => (location.hash = '#/e/' + f.id) })), doc);
+      const pick = el('input', { type: 'file', accept: 'image/*', multiple: true, hidden: true });
+      pick.onchange = async () => {
+        const files = [...pick.files];
+        if (!files.length) return;
+        try { await addPhotos(f, files); toast(`${files.length} photo added ✓`); await showFile(f.id); window.scrollTo(0, document.body.scrollHeight); }
+        catch (e) { setStatus(''); toast('Could not add photo: ' + e.message, 3500); }
+      };
+      view.replaceChildren(el('div.bar', null,
+        el('button.btn', { text: '✎ Edit', onclick: () => (location.hash = '#/e/' + f.id) }),
+        el('button.btn', { text: '📷 Add photo', onclick: () => pick.click() }), pick), doc);
     } else if (e === 'ipynb') {
       const nb = JSON.parse(await getText(f));
       view.replaceChildren(el('div.bar', null,
