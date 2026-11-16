@@ -1,5 +1,5 @@
 // Апп-ыг интернэтгүй үед ч нээгдэхээр кэшлэнэ (Google API-г кэшлэхгүй)
-const V = 'universe-shell-v1';
+const V = 'universe-shell-v2';
 const SHELL = ['./', 'index.html', 'style.css', 'app.js', 'manifest.json', 'icon-192.png', 'icon-180.png'];
 self.addEventListener('install', (e) => { e.waitUntil(caches.open(V).then((c) => c.addAll(SHELL)).then(() => self.skipWaiting())); });
 self.addEventListener('activate', (e) => {
