@@ -112,7 +112,19 @@ async function ensureToken() {
   throw new Error('signin');
 }
 
-async function api(method, path, { json, body, type, raw } = {}) {
+// Google "rate limit" (403/429) эсвэл 5xx үед хүлээгээд дахин оролдоно
+async function api(method, path, opts = {}) {
+  for (let i = 0; ; i++) {
+    try { return await api1(method, path, opts); }
+    catch (e) {
+      const retry = /Drive (429|5\d\d)|Drive 403:.*(rateLimit|RateLimit|rate limit)/.test(e.message);
+      if (!retry || i >= 5) throw e;
+      setStatus('түр хүлээнэ…');
+      await new Promise((r) => setTimeout(r, (2 ** i) * 1000 + Math.random() * 500));
+    }
+  }
+}
+async function api1(method, path, { json, body, type, raw } = {}) {
   if (!navigator.onLine) throw new Error('offline');
   const t = await ensureToken();
   const headers = { Authorization: 'Bearer ' + t };
