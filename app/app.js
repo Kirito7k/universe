@@ -43,6 +43,23 @@ function toast(t, ms = 1800) {
   document.body.append(x);
   setTimeout(() => x.remove(), ms);
 }
+// prompt()/confirm() нь зарим browser-т (LightNote, iOS standalone) ажилладаггүй тул өөрийн цонх
+function ask(title, value, okText = 'OK') {
+  return new Promise((res) => {
+    const input = value == null ? null : el('input.search', { value, autocapitalize: 'off' });
+    const close = (v) => { bg.remove(); res(v); };
+    const box = el('div.dlg', null, el('div.dlg-t', { text: title }), input || '',
+      el('div.bar', { style: 'justify-content:flex-end;margin:0' },
+        el('button.btn', { text: 'Cancel', onclick: () => close(null) }),
+        el('button.btn.primary', { text: okText, onclick: () => close(input ? input.value : true) })));
+    const bg = el('div.dlg-bg', { onclick: (e) => { if (e.target === bg) close(null); } }, box);
+    document.body.append(bg);
+    if (input) {
+      input.addEventListener('keydown', (e) => { if (e.key === 'Enter') close(input.value); if (e.key === 'Escape') close(null); });
+      setTimeout(() => { input.focus(); input.select(); }, 30);
+    }
+  });
+}
 function setStatus(t) { $('#status').textContent = t || ''; }
 const dayKey = (d = new Date()) => `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 const addDays = (k, n) => { const d = new Date(k + 'T00:00:00'); d.setDate(d.getDate() + n); return dayKey(d); };
@@ -119,7 +136,7 @@ async function api(method, path, opts = {}) {
     catch (e) {
       const retry = /Drive (429|5\d\d)|Drive 403:.*(rateLimit|RateLimit|rate limit)/.test(e.message);
       if (!retry || i >= 5) throw e;
-      setStatus('түр хүлээнэ…');
+      setStatus('waiting…');
       await new Promise((r) => setTimeout(r, (2 ** i) * 1000 + Math.random() * 500));
     }
   }
@@ -134,7 +151,7 @@ async function api1(method, path, { json, body, type, raw } = {}) {
   const tm = setTimeout(() => ctl.abort(), 60000);
   let r;
   try { r = await fetch(API + path, { method, headers, body, signal: ctl.signal }); }
-  catch (e) { throw new Error(e.name === 'AbortError' ? 'Drive хариу өгсөнгүй (60 сек)' : 'Сүлжээний алдаа: ' + e.message); }
+  catch (e) { throw new Error(e.name === 'AbortError' ? 'Drive did not respond (60 s)' : 'Network error: ' + e.message); }
   finally { clearTimeout(tm); }
   if (r.status === 401) { token = null; LS.del('token'); await ensureToken(); }
   if (!r.ok) throw new Error(`Drive ${r.status}: ${(await r.text()).slice(0, 200)}`);
@@ -161,7 +178,7 @@ function index(list) {
 
 async function loadAll() {
   setStatus('…');
-  if (!S.root && !view.childElementCount) view.replaceChildren(el('div.msg', { text: 'Drive-аас уншиж байна…' }));
+  if (!S.root && !view.childElementCount) view.replaceChildren(el('div.msg', { text: 'Loading from Drive…' }));
   const all = [];
   let pageToken = '';
   do {
@@ -259,8 +276,8 @@ let dirty = false; // засварлаж байгаа текст хадгала�
 function header(title, back) {
   $('#title').textContent = title;
   $('#back').hidden = !back;
-  $('#back').onclick = () => {
-    if (dirty && !confirm('Хадгалаагүй өөрчлөлт байна. Гарах уу?')) return;
+  $('#back').onclick = async () => {
+    if (dirty && !(await ask('You have unsaved changes. Leave?', null, 'Leave'))) return;
     dirty = false;
     location.replace(back); // эцэг хавтас / файл руу (түүх хуримтлуулахгүй)
   };
@@ -270,9 +287,9 @@ function showSignIn() {
   header('Universe');
   view.replaceChildren(el('div.center', null,
     el('h1', { text: 'Universe' }),
-    el('p.ln-dim', { text: 'Компьютер дээрх тэмдэглэлүүдээ Google Drive-аар дамжуулан уншиж, засна.' }),
-    el('button.btn.primary', { text: 'Google-ээр нэвтрэх', onclick: () => { LS.del('silentAt'); signIn(false); } }),
-    LS.get('authError', '') ? el('p.ln-warn', { text: 'Алдаа: ' + LS.get('authError') }) : ''));
+    el('p.ln-dim', { text: 'Read and edit your computer notes through Google Drive.' }),
+    el('button.btn.primary', { text: 'Sign in with Google', onclick: () => { LS.del('silentAt'); signIn(false); } }),
+    LS.get('authError', '') ? el('p.ln-warn', { text: 'Error: ' + LS.get('authError') }) : ''));
 }
 
 function showFolder(id) {
@@ -280,7 +297,7 @@ function showFolder(id) {
   const isRoot = id === S.root;
   header(isRoot ? 'Universe' : f ? f.name : 'Universe', isRoot ? null : '#/');
   const kids = sortKids(S.kids.get(id) || []);
-  const search = el('input.search', { placeholder: 'Хайх', type: 'search' });
+  const search = el('input.search', { placeholder: 'Search', type: 'search' });
   const list = el('div.list');
   const fill = () => {
     const q = search.value.trim().toLowerCase();
@@ -289,44 +306,44 @@ function showFolder(id) {
       el('span.i', { text: icon(x) }),
       el('span.n', { text: q ? pathOf(x) : x.name }),
       x.mimeType === FOLDER ? el('span.chev', { text: '›' }) : el('span.m', { text: new Date(x.modifiedTime).toLocaleDateString() }))));
-    if (!items.length) list.replaceChildren(el('div.empty', { text: q ? 'Олдсонгүй' : 'Хоосон хавтас' }));
+    if (!items.length) list.replaceChildren(el('div.empty', { text: q ? 'Nothing found' : 'Empty folder' }));
   };
   search.addEventListener('input', fill);
   fill();
   const crumb = isRoot ? '' : el('div.crumb', { text: 'Universe / ' + pathOf(f) });
-  const fab = el('button.fab', { text: '+', 'aria-label': 'Шинэ', onclick: () => newItem(id) });
+  const fab = el('button.fab', { text: '+', 'aria-label': 'New', onclick: () => newItem(id) });
   view.replaceChildren(search, crumb, list, fab);
 }
 
 async function newItem(parent) {
-  const name = prompt('Шинэ note-ын нэр (хавтас үүсгэх бол төгсгөлд нь / тавина):', 'New note');
+  const name = await ask('New note name (end with / to make a folder)', 'New note', 'Create');
   if (!name || !name.trim()) return;
   try {
     if (name.trim().endsWith('/')) { await createFolder(name.trim().replace(/\/+$/, ''), parent); showFolder(parent); return; }
     const n = /\.[a-z0-9]+$/i.test(name.trim()) ? name.trim() : name.trim() + '.md';
     const f = await createFile(n, parent, '');
     location.hash = '#/e/' + f.id;
-  } catch (e) { toast('Алдаа: ' + e.message, 3000); }
+  } catch (e) { toast('Error: ' + e.message, 3000); }
 }
 
 function driveLink(f) { return `https://drive.google.com/file/d/${f.id}/view`; }
 
 async function showFile(id) {
   const f = S.files.get(id);
-  if (!f) return showMsg('Файл олдсонгүй');
+  if (!f) return showMsg('File not found');
   header(f.name.replace(/\.md$/i, ''), '#/d/' + (f.parents || [S.root])[0]);
   const e = ext(f.name);
-  view.replaceChildren(el('div.msg', { text: 'Уншиж байна…' }));
+  view.replaceChildren(el('div.msg', { text: 'Loading…' }));
   try {
     if (e === 'md') {
       const text = await getText(f);
       const doc = el('div.doc', { html: render(text) });
       await fixImages(doc, f);
-      view.replaceChildren(el('div.bar', null, el('button.btn', { text: '✎ Засах', onclick: () => (location.hash = '#/e/' + f.id) })), doc);
+      view.replaceChildren(el('div.bar', null, el('button.btn', { text: '✎ Edit', onclick: () => (location.hash = '#/e/' + f.id) })), doc);
     } else if (e === 'ipynb') {
       const nb = JSON.parse(await getText(f));
       view.replaceChildren(el('div.bar', null,
-        el('a.btn.primary', { text: 'Colab-д нээх', href: `https://colab.research.google.com/drive/${f.id}`, target: '_blank' })), renderNotebook(nb));
+        el('a.btn.primary', { text: 'Open in Colab', href: `https://colab.research.google.com/drive/${f.id}`, target: '_blank' })), renderNotebook(nb));
     } else if (IMG.has(e)) {
       const url = URL.createObjectURL(await getBlob(f));
       view.replaceChildren(el('div.doc', null, el('img', { src: url, alt: f.name })));
@@ -335,10 +352,10 @@ async function showFile(id) {
       let html;
       try { html = hljs.getLanguage(e) ? hljs.highlight(text, { language: e }).value : hljs.highlightAuto(text).value; } catch { html = null; }
       const code = el('code'); if (html) code.innerHTML = html; else code.textContent = text;
-      view.replaceChildren(el('div.bar', null, el('button.btn', { text: '✎ Засах', onclick: () => (location.hash = '#/e/' + f.id) })), el('div.doc', null, el('pre.hljs', null, code)));
+      view.replaceChildren(el('div.bar', null, el('button.btn', { text: '✎ Edit', onclick: () => (location.hash = '#/e/' + f.id) })), el('div.doc', null, el('pre.hljs', null, code)));
     } else {
       view.replaceChildren(el('div.center', null, el('div', { text: icon(f), style: 'font-size:56px' }), el('p', { text: f.name }),
-        el('a.btn.primary', { text: 'Google Drive-д нээх', href: driveLink(f), target: '_blank' })));
+        el('a.btn.primary', { text: 'Open in Google Drive', href: driveLink(f), target: '_blank' })));
     }
   } catch (err) { handleErr(err); }
 }
@@ -350,7 +367,7 @@ async function fixImages(doc, note) {
     const src = decodeURIComponent(img.getAttribute('src') || '');
     if (/^(https?:|data:|blob:)/.test(src)) return;
     const f = byPath(src) || byPath((dir ? dir + '/' : '') + src);
-    if (!f) { img.alt = '[зураг олдсонгүй: ' + src + ']'; return; }
+    if (!f) { img.alt = '[image not found: ' + src + ']'; return; }
     try { img.src = URL.createObjectURL(await getBlob(f)); } catch {}
   }));
   for (const a of doc.querySelectorAll('a[href]')) a.target = '_blank';
@@ -386,37 +403,37 @@ function renderNotebook(nb) {
 
 async function showEdit(id) {
   const f = S.files.get(id);
-  if (!f) return showMsg('Файл олдсонгүй');
+  if (!f) return showMsg('File not found');
   header('✎ ' + f.name, '#/f/' + id);
-  view.replaceChildren(el('div.msg', { text: 'Уншиж байна…' }));
+  view.replaceChildren(el('div.msg', { text: 'Loading…' }));
   let text = '';
   try { text = await getText(f); } catch (e) { return handleErr(e); }
   const ta = el('textarea.edit', { spellcheck: 'false', autocapitalize: 'off' });
   ta.value = text;
   dirty = false;
-  const save = el('button.btn.primary', { text: 'Хадгалах', disabled: true });
+  const save = el('button.btn.primary', { text: 'Save', disabled: true });
   ta.addEventListener('input', () => { dirty = ta.value !== text; save.disabled = !dirty; });
   save.onclick = async () => {
     save.disabled = true;
-    save.textContent = 'Хадгалж байна…';
+    save.textContent = 'Saving…';
     try {
       await updateFile(f, ta.value, ext(f.name) === 'md' ? 'text/markdown; charset=utf-8' : 'text/plain; charset=utf-8');
       text = ta.value;
       dirty = false;
-      toast('Хадгаллаа ✓ Компьютер дээр хэдэн минутын дараа шинэчлэгдэнэ');
+      toast('Saved ✓ Your computer will update in a few minutes');
       location.replace('#/f/' + f.id);
-    } catch (e) { toast('Хадгалж чадсангүй: ' + e.message, 3500); save.disabled = false; }
-    save.textContent = 'Хадгалах';
+    } catch (e) { toast('Could not save: ' + e.message, 3500); save.disabled = false; }
+    save.textContent = 'Save';
   };
-  view.replaceChildren(el('div.bar', null, save, el('button.btn', { text: 'Болих', onclick: () => $('#back').onclick() })), ta);
+  view.replaceChildren(el('div.bar', null, save, el('button.btn', { text: 'Cancel', onclick: () => $('#back').onclick() })), ta);
 }
 
 function showMsg(t) { header('Universe', '#/'); view.replaceChildren(el('div.msg', { text: t })); }
 
 function handleErr(e) {
   if (e.message === 'signin') return showSignIn();
-  if (e.message === 'offline') return showMsg('Интернэт алга. Өмнө нь нээсэн файлууд л харагдана.');
-  showMsg('Алдаа: ' + e.message);
+  if (e.message === 'offline') return showMsg('Offline. Only files you opened before are available.');
+  showMsg('Error: ' + e.message);
 }
 
 // ---------- өдрийн хичээл (компьютерийнхтэй ижил learn.json) ----------
@@ -466,7 +483,7 @@ const L = {
       if (lf) await updateFile(lf, out, 'application/json'); else await createFile('learn.json', S.meta.id, out, 'application/json');
       this.p = merged;
       LS.del('learnLocal');
-    } catch (e) { toast('Интернэт орж ирэхэд хадгална'); }
+    } catch (e) { toast('Will save when back online'); }
     paintDot();
   },
   byId(id) { return this.lessons.find((l) => l.id === id); },
@@ -483,26 +500,26 @@ const stopRec = () => { try { if (rec && rec.state === 'recording') rec.stop(); 
 function paintDot() { $('#learnBtn').classList.toggle('dot', L.pending()); }
 
 async function showLearn(mode) {
-  header('Өдрийн хичээл', '#/');
+  header('Daily lesson', '#/');
   stopTimer(); stopRec();
-  if (!L.loaded) { view.replaceChildren(el('div.msg', { text: 'Уншиж байна…' })); try { await L.load(); } catch (e) { return handleErr(e); } }
+  if (!L.loaded) { view.replaceChildren(el('div.msg', { text: 'Loading…' })); try { await L.load(); } catch (e) { return handleErr(e); } }
   const l = L.next();
   const box = el('div.center');
-  if (!S.meta || !L.lessons.length) box.append(el('p', { text: 'Хичээл олдсонгүй. Компьютер дээрээ LightNote-ыг нээж sync хийнэ үү.' }));
-  else if (!l) box.append(el('h2', { text: 'Бүх хичээл дууслаа 🎉' }), el('p.ln-dim', { text: 'Компьютер дээрээ шинэ хичээлийн файл нэмээрэй.' }));
+  if (!S.meta || !L.lessons.length) box.append(el('p', { text: 'No lessons found. Open LightNote on your computer and sync.' }));
+  else if (!l) box.append(el('h2', { text: 'All lessons done 🎉' }), el('p.ln-dim', { text: 'Add a new lesson file on your computer.' }));
   else {
-    if (L.doneToday()) box.append(el('div.ln-ok', { text: '✓ Өнөөдрийн хичээлээ хийсэн байна' }));
+    if (L.doneToday()) box.append(el('div.ln-ok', { text: '✓ Today\'s lesson is done' }));
     box.append(el('div.ln-sub', { text: l.subject }), el('h2', { text: l.title }),
-      el('p.ln-dim', { text: `${l.cards.length} карт · 8 минут, дараа нь ${l.quiz.length + Math.min(MAX_REVIEW, L.due().length)} асуулт · 2 минут` }),
+      el('p.ln-dim', { text: `${l.cards.length} cards · 8 min, then ${l.quiz.length + Math.min(MAX_REVIEW, L.due().length)} questions · 2 min` }),
       el('div.bar', { style: 'justify-content:center' },
-        el('button.btn.primary', { text: L.doneToday() ? 'Дараагийн хичээл' : 'Эхлэх', onclick: () => startLesson(l) }),
-        mode === 'auto' ? el('button.btn', { text: '30 минутын дараа', onclick: () => { L.p.snoozeUntil = Date.now() + 30 * 60000; L.save(); location.hash = '#/'; } }) : '',
-        mode === 'auto' ? el('button.btn', { text: 'Өнөөдөр алгасах', onclick: () => { L.p.skipDate = dayKey(); L.save(); location.hash = '#/'; } }) : ''));
+        el('button.btn.primary', { text: L.doneToday() ? 'Next lesson' : 'Start', onclick: () => startLesson(l) }),
+        mode === 'auto' ? el('button.btn', { text: 'In 30 min', onclick: () => { L.p.snoozeUntil = Date.now() + 30 * 60000; L.save(); location.hash = '#/'; } }) : '',
+        mode === 'auto' ? el('button.btn', { text: 'Skip today', onclick: () => { L.p.skipDate = dayKey(); L.save(); location.hash = '#/'; } }) : ''));
     const n = L.remaining();
-    if (n <= 7) box.append(el('div.ln-warn', { text: `${n} хоногийн хичээл үлдлээ.` }));
+    if (n <= 7) box.append(el('div.ln-warn', { text: `${n} lessons left.` }));
   }
-  if (L.p.streak) box.append(el('p.ln-dim', { text: `🔥 ${L.p.streak} хоног дараалан` }));
-  box.append(el('p', null, el('button.btn', { text: 'Түүх', onclick: showHistory })));
+  if (L.p.streak) box.append(el('p.ln-dim', { text: `🔥 ${L.p.streak}-day streak` }));
+  box.append(el('p', null, el('button.btn', { text: 'History', onclick: showHistory })));
   view.replaceChildren(box);
 }
 
@@ -517,7 +534,7 @@ function tickLearn() {
   const t = $('.ln-time');
   if (!t) return;
   const left = LS_state.endAt - Date.now();
-  t.textContent = left > 0 ? mmss(left) : 'Quiz-ийн цаг боллоо';
+  t.textContent = left > 0 ? mmss(left) : 'Time for the quiz';
   t.classList.toggle('due', left <= 0);
 }
 function renderCard() {
@@ -535,9 +552,9 @@ function renderCard() {
   const nav = el('div.ln-nav', null,
     el('button.btn', { text: '←', disabled: ci === 0, onclick: () => go(ci - 1) }),
     dots,
-    last ? (review ? el('button.btn.primary', { text: 'Түүх', onclick: showHistory }) : el('button.btn.primary', { text: 'Quiz →', onclick: startQuiz }))
+    last ? (review ? el('button.btn.primary', { text: 'History', onclick: showHistory }) : el('button.btn.primary', { text: 'Quiz →', onclick: startQuiz }))
       : el('button.btn.primary', { text: '→', onclick: () => go(ci + 1) }));
-  view.replaceChildren(head, card, nav, !last && !review ? el('p', { style: 'text-align:center' }, el('button.btn', { text: 'Шууд quiz руу', onclick: startQuiz })) : '');
+  view.replaceChildren(head, card, nav, !last && !review ? el('p', { style: 'text-align:center' }, el('button.btn', { text: 'Skip to quiz', onclick: startQuiz })) : '');
   // хуруугаар зүүн/баруун тийш шудрах
   let x0 = null;
   card.addEventListener('touchstart', (e) => (x0 = e.touches[0].clientX), { passive: true });
@@ -555,7 +572,7 @@ function speakCard(c) {
   if (c.tip) wrap.append(el('div.ln-dim', { text: c.tip }));
   const audio = el('audio', { controls: true, hidden: true });
   const sample = el('div.ln-sample', { hidden: true, html: render(c.sample || '') });
-  const btn = el('button.btn.rec', { text: '● Бичүүлэх' });
+  const btn = el('button.btn.rec', { text: '● Record' });
   btn.onclick = async () => {
     if (rec && rec.state === 'recording') return stopRec();
     try {
@@ -567,13 +584,13 @@ function speakCard(c) {
         stream.getTracks().forEach((t) => t.stop());
         audio.src = URL.createObjectURL(new Blob(chunks, { type: rec.mimeType }));
         audio.hidden = false;
-        btn.textContent = '● Дахин бичүүлэх'; btn.classList.remove('on');
+        btn.textContent = '● Record again'; btn.classList.remove('on');
       };
       rec.start();
-      btn.textContent = '■ Зогсоох'; btn.classList.add('on');
-    } catch { btn.textContent = 'Микрофон зөвшөөрөгдөөгүй'; }
+      btn.textContent = '■ Stop'; btn.classList.add('on');
+    } catch { btn.textContent = 'Microphone not allowed'; }
   };
-  wrap.append(el('div.bar', null, btn, el('button.btn', { text: 'Жишээ хариулт', onclick: () => (sample.hidden = !sample.hidden) })), audio, sample);
+  wrap.append(el('div.bar', null, btn, el('button.btn', { text: 'Sample answer', onclick: () => (sample.hidden = !sample.hidden) })), audio, sample);
   return wrap;
 }
 
@@ -588,9 +605,9 @@ function startQuiz() {
   const time = el('div.ln-time');
   const list = el('div');
   items.forEach((it, i) => list.append(el('div.ln-q', null,
-    el('div.ln-q-title', null, el('b', { text: i + 1 + '. ' }), it.review ? el('span.ln-tag', { text: 'Давтлага' }) : '', el('span', { html: inline(it.q.q) })),
+    el('div.ln-q-title', null, el('b', { text: i + 1 + '. ' }), it.review ? el('span.ln-tag', { text: 'Review' }) : '', el('span', { html: inline(it.q.q) })),
     it.q.options.map((o, oi) => el('label.ln-opt', null, el('input', { type: 'radio', name: 'q' + i, onchange: () => (answers[i] = oi) }), el('span', { html: inline(o) }))))));
-  const submit = el('button.btn.primary', { text: 'Шалгах' });
+  const submit = el('button.btn.primary', { text: 'Check' });
   let finished = false;
   const finish = () => {
     if (finished) return; finished = true;
@@ -606,7 +623,7 @@ function startQuiz() {
       const labels = box.querySelectorAll('.ln-opt');
       if (labels[it.q.answer]) labels[it.q.answer].classList.add('correct');
       if (!ok && answers[i] >= 0 && labels[answers[i]]) labels[answers[i]].classList.add('chosen');
-      box.append(el('div.ln-explain', { html: (ok ? '✓ ' : answers[i] < 0 ? '— Хариулаагүй. ' : '✗ ') + render(it.q.explain || '') }));
+      box.append(el('div.ln-explain', { html: (ok ? '✓ ' : answers[i] < 0 ? '— Not answered. ' : '✗ ') + render(it.q.explain || '') }));
       const key = (r) => r.lid === it.lid && r.qi === it.qi;
       let r = L.p.reviews.find(key);
       if (!it.review) { total++; if (ok) score++; }
@@ -621,8 +638,8 @@ function startQuiz() {
     L.p.done[l.id] = { date: t, score, total, answers: answers.slice(0, l.quiz.length) };
     L.save();
     time.textContent = `${score} / ${total}`;
-    view.prepend(el('div.center', { style: 'padding:16px' }, el('h2', { text: `${score} / ${total} зөв` }), el('div.ln-dim', { text: `🔥 ${L.p.streak} хоног · ${L.remaining()} хичээл үлдсэн` })));
-    submit.textContent = 'Дуусгах';
+    view.prepend(el('div.center', { style: 'padding:16px' }, el('h2', { text: `${score} / ${total} correct` }), el('div.ln-dim', { text: `🔥 ${L.p.streak} days · ${L.remaining()} lessons left` })));
+    submit.textContent = 'Finish';
     submit.onclick = () => (location.hash = '#/');
     window.scrollTo(0, 0);
   };
@@ -636,13 +653,13 @@ function startQuiz() {
 
 function showHistory() {
   stopTimer(); stopRec();
-  header('Түүх', '#/learn');
+  header('History', '#/learn');
   const rows = Object.entries(L.p.done).map(([id, d]) => ({ l: L.byId(id), d })).filter((x) => x.l).sort((a, b) => (a.d.date < b.d.date ? 1 : -1));
   const list = el('div.list');
   for (const { l, d } of rows) list.append(el('div.row', { onclick: () => l.cards && l.cards.length && startLesson(l, true) },
     el('span.m', { text: d.date.slice(5) }), el('span.n', { text: `${l.subject} · ${l.title}` }), el('span.m', { text: `${d.score}/${d.total}` })));
-  if (!rows.length) list.append(el('div.empty', { text: 'Одоохондоо хийсэн хичээл алга' }));
-  view.replaceChildren(el('p.ln-dim', { text: `Нийт ${rows.length} хичээл · 🔥 ${L.p.streak || 0} хоног · давтлагад ${L.p.reviews.length} асуулт (өнөөдөр ${L.due().length})` }), list);
+  if (!rows.length) list.append(el('div.empty', { text: 'No lessons done yet' }));
+  view.replaceChildren(el('p.ln-dim', { text: `${rows.length} lessons · 🔥 ${L.p.streak || 0} days · ${L.p.reviews.length} in review (${L.due().length} due today)` }), list);
 }
 
 // 20:00-аас хойш апп нээхэд өнөөдрийн хичээлээ хийгээгүй бол санал болгоно
@@ -660,7 +677,7 @@ async function route() {
   stopTimer(); stopRec();
   const h = location.hash || '#/';
   if (!token && !LS.get('files', null)) return showSignIn();
-  if (!S.root) return showMsg('Drive дээр "Universe" хавтас олдсонгүй. Компьютер дээрээ LightNote → Settings → Sync асаана уу.');
+  if (!S.root) return showMsg('No "Universe" folder in Drive. Turn on LightNote → Settings → Sync on your computer.');
   let m;
   if (h.startsWith('#/learn')) return showLearn(h.includes('auto') ? 'auto' : '');
   if ((m = h.match(/^#\/f\/(.+)/))) return showFile(m[1]);
@@ -672,17 +689,17 @@ window.addEventListener('hashchange', route);
 window.addEventListener('beforeunload', (e) => { if (dirty) { e.preventDefault(); e.returnValue = ''; } });
 $('#learnBtn').onclick = () => (location.hash = '#/learn');
 $('#refresh').onclick = async () => {
-  try { await loadAll(); L.loaded = false; await L.load(); paintDot(); toast('Шинэчлэгдлээ'); route(); } catch (e) { handleErr(e); }
+  try { await loadAll(); L.loaded = false; await L.load(); paintDot(); toast('Refreshed'); route(); } catch (e) { handleErr(e); }
 };
 window.addEventListener('online', () => setStatus(''));
-window.addEventListener('offline', () => setStatus('офлайн'));
+window.addEventListener('offline', () => setStatus('offline'));
 
 async function start() {
   readAuthResponse();
   if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js').catch(() => {});
   const cached = LS.get('files', null);
   if (cached) index(cached); // эхлээд кэшээс шууд харуулна
-  if (!navigator.onLine) setStatus('офлайн');
+  if (!navigator.onLine) setStatus('offline');
   if (cached) route();
   if (!token && !LS.get('email', '')) { if (!cached) showSignIn(); return; }
   try {
